@@ -1,0 +1,25 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Never paste your agent key or the content of agent.key. Remove keys from logs before posting."
+  - type: input
+    id: plugin
+    attributes: { label: Plugin version, placeholder: "1.0.0" }
+    validations: { required: true }
+  - type: input
+    id: platform
+    attributes: { label: "all platforms version and Java version", placeholder: "output of the version command and java -version" }
+    validations: { required: true }
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: "Expected vs. actual behaviour" }
+    validations: { required: true }
+  - type: textarea
+    id: status
+    attributes: { label: Output of the anx status command, render: text }
+  - type: textarea
+    id: log
+    attributes: { label: Relevant log lines (keys removed), render: text }

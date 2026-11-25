@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with: { validate-wrappers: true, cache-read-only: true }
+      - id: v
+        run: |
+          v=$(sed -n 's/^version=//p' gradle.properties); echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then echo "::error::Tag $GITHUB_REF_NAME does not match version $v"; exit 1; fi
+          grep -q "^## \\[$v\\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $v"; exit 1; }
+      - run: ./gradlew clean build --no-daemon
+      - name: Jar, checksum, notes
+        run: |
+          v=${{ steps.v.outputs.version }}; mkdir -p release
+          cp build/libs/anx-network-bridge-core-$v.jar release/
+          (cd release && sha256sum anx-network-bridge-core-$v.jar > anx-network-bridge-core-$v.jar.sha256)
+          { echo "## ANX Network Bridge Core $v"; echo; awk -v v="$v" '/^## \[/{p = index($0, "[" v "]") > 0; next} p' CHANGELOG.md; echo
+             echo "Source tree SHA-256 (for core.lock): \`$(scripts/core-tree-hash.sh .)\`"; echo
+             echo "Plugins vendor the source of this tag; the jar is attached for inspection."; echo; echo '```'; cat release/*.sha256; echo '```'; } > release/notes.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: release, path: release/, if-no-files-found: error }
+  publish:
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: release, path: release }
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          V: ${{ needs.build.outputs.version }}
+        run: |
+          cd release
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # A release created on github.com together with its tag starts without files: attach the verified
+            # jar and checksum once. Files that already exist are never overwritten (no --clobber).
+            if [ -z "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')" ]; then
+              gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" anx-network-bridge-core-$V.jar anx-network-bridge-core-$V.jar.sha256
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "ANX Network Bridge Core $V" --notes-file notes.md --prerelease=false --draft=false --latest
+              exit 0
+            fi
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir published
+            cmp -s published/anx-network-bridge-core-$V.jar.sha256 anx-network-bridge-core-$V.jar.sha256 && { echo "Already published with identical bytes."; exit 0; }
+            echo "::error::Release $TAG exists with different bytes"; exit 1
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "ANX Network Bridge Core $V" --notes-file notes.md anx-network-bridge-core-$V.jar anx-network-bridge-core-$V.jar.sha256

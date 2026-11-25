@@ -1,0 +1,32 @@
+// ANX Network Bridge Core: the platform-independent agent (HTTP, queue, pairing, telemetry, rewards).
+// No runtime dependencies. Platform plugins vendor this source at an exact tag (see their core.lock).
+plugins { id 'java-library' }
+
+group = 'run.anx'
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8'; options.release = 21; options.compilerArgs += ['-Xlint:all', '-Werror'] }
+tasks.withType(AbstractArchiveTask).configureEach { preserveFileTimestamps = false; reproducibleFileOrder = true }
+
+tasks.register('selfTest', JavaExec) {
+    description = 'Dependency-free tests, including a full agent run against a local stand-in for the anx.run API'
+    group = 'verification'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'run.anx.bridge.CoreSelfTest'
+}
+tasks.named('check') { dependsOn 'selfTest' }
+
+// The agent reports Agent.VERSION; it must be the version of this build.
+tasks.register('checkVersion') {
+    group = 'verification'
+    def src = file('src/main/java/run/anx/bridge/Agent.java')
+    def expected = project.version.toString()
+    inputs.file(src)
+    doLast {
+        def m = (src.text =~ /VERSION = "([^"]+)"/)
+        if (!m.find() || m.group(1) != expected) throw new GradleException("Agent.VERSION is ${m.find() ? m.group(1) : '?'} but the project version is ${expected}")
+    }
+}
+tasks.named('check') { dependsOn 'checkVersion' }
+// The self-test is a plain Java program (no JUnit), so the standard test task has nothing to discover.
+tasks.named('test') { failOnNoDiscoveredTests = false }
